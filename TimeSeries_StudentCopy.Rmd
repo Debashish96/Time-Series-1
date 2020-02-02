@@ -1,0 +1,571 @@
+---
+title : Time Series Analysis on e-Commerce Data to Predict the Price of a Product in FUTURE
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+---
+
+# Problem Description
+
+Using e-commerce data, build time series models to predict the price of a certain product for next 4 months in advance. And finally evaluate each of the algorithms.
+
+## Clear the Global Environment
+```{r}
+rm(list = ls())
+```
+
+## Load required R library
+```{r}
+
+library(zoo) # Z's Ordered Observations
+library(dplyr)
+library(TTR) # Technical Trading Rules
+library(forecast)
+library(DMwR)
+```
+
+## Read Data from RData
+* Set current working directory
+* Use readRDS function to read RData file
+```{r,}
+PATH = getwd()
+setwd(PATH)
+rm(PATH)
+
+data = readRDS("Data.rds")
+
+```
+
+## Explore and understand the data
+
+```{r, echo=T}
+## Dimension of the Data set
+
+## Structure of the Data set
+str(data)
+
+## Look at the summary statistics
+summary(data)
+```
+
+## Look at the first and last 6 records using head and tail commands
+```{r, echo=T}
+
+
+```
+
+```{r, echo=T}
+## Look at the count for different SKU values (use table function)
+table(data$SKU)
+```
+
+## Convert attributes into appropriate type
+```{r, echo=T}
+data$SKU = as.factor(data$SKU)
+# data$Price = as.numeric(data$Price)
+data$Date = as.Date(data$Date, format="%Y-%m-%d")
+```
+
+```{r, echo=T}
+# Summary of the data
+
+
+# Re-look at the first 6 records
+
+```
+
+## Focusing on a particular product of choice
+* Since different products price vary in a different way along the year we choose a particular product. 
+```{r, echo=T}
+data[data$SKU==3,]
+data3=data[data$SKU==3,]
+```
+
+## Basic info about that product
+```{r, echo=T}
+dim(data3)
+summary(data3)
+
+head(data3)
+```
+
+## Sort the Data in increasing order of date
+```{r, echo=T}
+data3 = data3[order(data3$Date, decreasing=F), ]
+
+head(data3)
+```
+
+## As all records has same SKU, it can be removed
+```{r, echo=T}
+data3$SKU = NULL
+
+head(data3)
+```
+
+## Observation & Analysis 
+
+* On the given date, product has multiple prices, so one way is to consider the min price.
+* Use dplyr package to do the same. 
+```{r, echo=T}
+library(dplyr)
+
+data3 = data3 %>% group_by(Date) %>% summarise("MinPrice" = min(Price))
+
+data3 = data.frame(data3)
+
+head(data3)
+```
+
+## Handle missing values 
+* Some times there will be missing entries in dates, which will create a missing day/month/quarter/annual
+
+## Detect missing values
+* Using min and max date in the data, create new date field with continuous sequence of dates 
+* Check Data field in Data against newly created data field and find missing values.
+```{r, echo=T}
+minDate = min(data3$Date)
+maxDate = max(data3$Date)
+
+minDate
+maxDate
+
+seq = data.frame("DateRange" = seq(minDate, maxDate, by="days"))
+
+data3 = seq %>% full_join(data3, c("DateRange" = "Date"))
+
+data3 = data.frame(data3)
+
+rm(minDate, maxDate, seq)
+
+head(data3,10)
+```
+
+## Imputation of Missing Values
+* Replace the missing values by taking average of it's most recent preceding and succeeding values.
+* For that, use na.locf (Last Observation Carried Forward) function in the "zoo" package and rev function
+```{r, echo=T}
+data3$MinPrice = (na.locf(data3$MinPrice, fromLast = FALSE) + 
+                    na.locf(data3$MinPrice, fromLast = TRUE))/2
+
+head(data3)
+plot(data3$MinPrice, type = 'l')
+
+```
+
+## Observation on MinPrice
+
+* As per domain expert requirement, aggregated the data at Month level by taking mean
+```{r, echo=T}
+# Derive Year and Month attribute 
+data3$Year = as.numeric(format(data3$DateRange, format="%Y"))
+data3$Month = as.numeric(format(data3$DateRange, format="%m"))
+
+
+data3 = data3 %>% group_by(Year, Month) %>% summarise("MeanPrice" = mean(MinPrice))
+
+print(data3)
+
+data3 = data.frame(data3)
+
+plot(data3$MeanPrice, type = 'l')
+
+
+```
+
+## Observation on MinPrice
+
+* As per domain expert requirement, aggregated the data at Month level by taking mean
+```{r, echo=T}
+# Creating sequence Time variable.
+data3$Time = 1:nrow(data3)
+
+# Month attribute is used in future model for seasonality 
+data3$Month = as.factor(data3$Month)
+
+# Year attribute is not required further, so removing it
+data3$Year = NULL
+
+head(data3)
+
+
+```
+
+## View data
+```{r, echo=T}
+# View(data3)
+```
+
+## Splitting of the Dataset into Train and Test
+* As this data set is time dependent and sequence is important i.e. no random split. 
+```{r, echo=T}
+train = data3[1:53,]
+test = data3[54:nrow(data3),]
+rm(data3)
+```
+
+## Regression on time
+* As trend is also present Regression on time will work. 
+
+### Simple Linear Regression
+```{r}
+## Simple linear regression
+lm1 = lm(MeanPrice~Time, data = train)
+
+pred_Train = predict(lm1)
+pred_Test  = predict(lm1, test)
+
+plot(train$MeanPrice, type="l")
+points(train$Time, pred_Train, type="l", col="red", lwd=2)
+```
+
+### Find error for lm1 on both Test and Train data
+```{r, echo=T}
+lm1TrainError = regr.eval(train$MeanPrice, pred_Train)
+lm1TestError  = regr.eval(test$MeanPrice, pred_Test)
+lm1TrainError
+lm1TestError
+```
+
+### Linear Regression (Quadratic)
+```{r}
+lm2 = lm(MeanPrice~poly(train$Time, 2, raw=TRUE), data = train)
+
+
+pred_Train = predict(lm2)
+pred_Test  = predict(lm2, test)
+
+plot(train$MeanPrice, type="l")
+points(train$Time, pred_Train, type="l", col="red", lwd=2)
+```
+
+### Find error for lm2 on both Test and Train data
+```{r, echo=T}
+lm2TrainError = regr.eval(train$MeanPrice, pred_Train)
+lm2TestError  = regr.eval(test$MeanPrice, pred_Test)
+lm2TrainError
+lm2TestError
+```
+
+### Seasonal Linear Regression Model using dummies (i.e. Month factor attribute is used to capture seasonality)
+```{r}
+str(train)
+slm1 <- lm(MeanPrice~., data=train)
+
+pred_Train = predict(slm1)
+pred_Test  = predict(slm1, test)
+
+plot(train$MeanPrice, type="l")
+points(train$Time, pred_Train, type="l", col="red", lwd=2)
+
+```
+
+### Find error for slm1 on both Test and Train data
+```{r, echo=T}
+slm1TrainError = regr.eval(train$MeanPrice, pred_Train)
+slm1TestError = regr.eval(test$MeanPrice, pred_Test)
+slm1TrainError
+slm1TestError
+```
+
+
+### Seasonal Linear Regression Model using dummies (i.e. Month factor attribute is used to capture seasonality) along with transformation
+```{r}
+str(train)
+slm2 <- lm(MeanPrice~poly(Time, 2, raw=TRUE)+Month, data=train)
+
+pred_Train = predict(slm2)
+pred_Test  = predict(slm2, test)
+
+plot(train$MeanPrice, type="l")
+points(train$Time, pred_Train, type="l", col="red", lwd=2)
+```
+
+
+### Find error for slm1 on both Test and Train data
+```{r, echo=T}
+slm2TrainError = regr.eval(train$MeanPrice, pred_Train)
+slm2TestError = regr.eval(test$MeanPrice, pred_Test)
+slm2TrainError
+slm2TestError
+```
+
+### Converting data into R time series object 
+* Our target variable is price and price is aggregated at month level
+```{r, echo=T}
+train_TS <- ts(train$MeanPrice, frequency = 12, start = c(2009, 4))
+train_TS
+
+test_TS <- ts(test$MeanPrice, frequency = 12, start = c(2013, 9))
+test_TS
+```
+
+### Visualize the time series Data
+```{r, echo=T}
+plot(train_TS, 
+     type="l", lwd=3, col="blue", 
+     xlab="Monthly", ylab="Mean Price",
+     main="Aggregated Monthly Price Time series plot of 3 product")
+plot(test_TS, col="red", lwd=3)
+```
+
+### Decomposed Time Series
+* Decompose will provide more information on seasonality, trend and randomness
+```{r, echo=T}
+train_Decomposed = decompose(train_TS)
+plot(train_Decomposed)
+rm(train_Decomposed)
+```
+
+
+### Modelling  the time series using simple moving averages
+```{r, warning=FALSE}
+fitsma = SMA(train_TS, n=2)
+predsma = forecast(fitsma, h=4)
+plot(predsma)
+```
+
+```{r}
+train_TS
+fitsma
+predsma$mean
+predsma
+```
+
+### Find error for SMA on both Test and Train data
+```{r, echo=T}
+smaTrainError = regr.eval(train_TS[2:length(train_TS)], fitsma[2:length(train_TS)])
+smaTestError = regr.eval(test$MeanPrice, predsma$mean)
+smaTrainError
+smaTestError
+```
+
+### Weighted Moving Averages
+```{r, echo=T}
+fitwma = WMA(train_TS, n=2, 1:2)
+predwma = forecast(fitwma, h=4)
+plot(predwma)
+```
+
+```{r}
+train_TS
+fitwma
+predwma
+```
+
+### Find error for WMA on both Test and Train data
+```{r, echo=T}
+wmaTrainError = regr.eval(train_TS[2:length(train_TS)], fitwma[2:length(train_TS)])
+wmaTestError = regr.eval(test$MeanPrice, predwma$mean)
+wmaTrainError
+wmaTestError
+```
+
+### Exponential Moving Averages
+```{r, echo=T}
+fitEma = EMA(train_TS, n=2)
+predema = forecast(fitEma, h=4)
+plot(predema)
+```
+
+```{r}
+train_TS
+fitEma
+predema
+
+```
+
+### Find error for EMA on both Test and Train data
+```{r, echo=T}
+emaTrainError = regr.eval(train_TS[2:length(train_TS)], fitEma[2:length(train_TS)])
+emaTestError = regr.eval(test$MeanPrice, predema$mean)
+emaTrainError
+emaTestError
+```
+## HoltWinters model
+### Build a HoltWinters model
+```{r}
+model_HW = HoltWinters(train_TS)
+model_HW
+```
+  
+### HoltWinters model  - additive and multiplicative models  
+```{r}
+# Additive Model
+model_HW_Add = HoltWinters(train_TS, seasonal="additive")
+model_HW_Add
+```  
+  
+```{r}
+# Multiplicative Model
+model_HW_Mul = HoltWinters(train_TS, seasonal="multiplicative")
+model_HW_Mul
+```
+* Since you are building the models on monthly data, you will get 12 seasonal components. If you are reading the weekly data, you will get 53 seasonal components
+  
+### Prediction on the Train
+```{r}
+pred_train_HW = data.frame(model_HW_Mul$fitted)
+pred_train_HW
+pred_train_HW$xhat
+```
+  
+### Prediction on test data
+```{r}
+pred_test_HW = forecast(model_HW_Mul, h = 4)
+
+plot(pred_test_HW)
+
+pred_test_HW
+
+pred_test_HW$mean
+```
+  
+### Error metrics  
+```{r}
+# accuracy() from Forecast package
+regr.eval(test$MeanPrice, pred_test_HW$mean)
+```
+  
+## Build a HoltWinters model with no trend and no seasonality 
+```{r, echo=T}
+hw_NT_NS = HoltWinters(train_TS, beta=F, gamma=F)
+hw_NT_NS
+```
+
+```{r, echo=T}
+train_TS
+head(hw_NT_NS$fitted)
+```
+
+```{r, echo=T}
+predhw_NT_NS = predict(hw_NT_NS, 4, prediction.interval = TRUE)
+predhw_NT_NS
+
+forecast(model_HW_Mul, h = 4)
+```
+
+### Find error for hw_NT_NS on both Test and Train data
+```{r, echo=T}
+
+regr.eval(train$MeanPrice[2:length(train$MeanPrice)], hw_NT_NS$fitted[,1])
+
+regr.eval(test$MeanPrice, predhw_NT_NS[,1])
+
+plot(hw_NT_NS, predhw_NT_NS)
+```
+
+## Build a HoltWinters model with trend and no seasonality  
+```{r, echo=T}
+hw_T_NS = HoltWinters(train_TS, beta=T, gamma=F)
+hw_T_NS
+
+train_TS
+head(hw_T_NS$fitted)
+
+predhw_T_NS = predict(hw_T_NS, 4, prediction.interval = TRUE)
+head(predhw_T_NS)
+```
+
+### Find error for hw_T_NS on both Test and Train data
+```{r, echo=T}
+
+regr.eval(train$MeanPrice[3:length(train$MeanPrice)], hw_T_NS$fitted[,1])
+
+regr.eval(test$MeanPrice, predhw_T_NS[,1])
+
+plot(hw_T_NS, predhw_T_NS)
+```
+
+## HoltWinters model with trend and Seasonality
+```{r, echo=T}
+
+hw_T_S = HoltWinters(train_TS, beta=T, gamma=T)
+hw_T_S = HoltWinters(train_TS)
+hw_T_S
+
+head(train_TS)
+head(hw_T_S$fitted)
+
+predhw_T_S = predict(hw_T_S, 4, prediction.interval = TRUE)
+head(predhw_T_S)
+```
+
+### Find error for hw_T_S on both Test and Train data
+```{r, echo=T}
+
+regr.eval(train$MeanPrice[13:length(train$MeanPrice)], hw_T_S$fitted[,1])
+
+regr.eval(test$MeanPrice, predhw_T_S[,1])
+
+plot(hw_T_S, predhw_T_S)
+```
+
+## HoltWinters model with defaults 
+```{r, echo=T}
+hw = HoltWinters(train_TS)
+hw
+
+head(train_TS)
+head(hw$fitted)
+
+predhw = predict(hw, 4, prediction.interval = TRUE)
+head(predhw)
+```
+
+### Find error for hw on both Test and Train data
+```{r, echo=T}
+
+regr.eval(train$MeanPrice[13:length(train$MeanPrice)], hw$fitted[,1])
+
+regr.eval(test$MeanPrice, predhw[,1])
+
+plot(hw, predhw)
+```
+
+
+### ACF, PACF plots 
+#LAG=44 means construct 44 lines
+* ACF: n th lag of ACF is the correlation between a day and n days before that.
+* PACF: The same as ACF with all intermediate correlations removed.
+```{r, echo=T}
+par(mfrow=c(1,1))
+plot(train_TS, type="l")
+Acf(train_TS, lag=44)
+Pacf(train_TS, lag=44)
+```
+
+* ACF and PACF --> Idealized Trend, Seasonality and Randomness
+  * Ideal Trend      : Decreasing ACF and 1 or 2 lags of PACF
+  * Ideal Seasonality: Cyclicality in ACF and a few lags of PACF with some positive and some negative
+  * Ideal Random     : A spike may or may not be present; even if present, magnitude will be small
+
+
+### Let's see the acf and pacf for one diff data.
+```{r, echo=T}
+par(mfrow=c(1,1))
+
+plot(diff(train_TS, lag=1), type="l")
+Acf(diff(train_TS,lag=1), lag=43) 
+Pacf(diff(train_TS, lag=1),lag=43)
+```
+
+### Let's see the acf and pacf for seasonal diff data.
+```{r, echo=T}
+par(mfrow=c(1,1))
+
+plot(diff(train_TS, lag=12), type="l")
+Acf(diff(train_TS,lag=12), lag=43) 
+Pacf(diff(train_TS, lag=12),lag=43)
+```
+
+
+### Stationarize by differencing
+* ndiffs and nsdiffs functions of forecast package can be used to findout the number of differences and seasonal differences, required to stationarize the data
+```{r, echo=T}
+ndiffs(train_TS)
+nsdiffs(train_TS)
+ndiffs(diff(train_TS,lag=12))
+```
+
